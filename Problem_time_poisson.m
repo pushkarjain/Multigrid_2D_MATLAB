@@ -1,32 +1,50 @@
   clc;
   clear;
   close;
- 
-% 2D Poisson solution
-% Rectangular domain: [x_start, x_end] X [y_start, y_end]
-% Rectangular mesh with spacing h in x and y directions (ndim = 2)
-% Mesh connectivity stored in inode
-% Tranformation from x,y directions to zi,eta directions
-% nnodes = 4 nodes in rectangular element
-% Dirichlet condition with 0 at boundary (id = 0 at boundary, 1 elsewhere)
-% Gaussian quadrature integration with num_gauss_quad_points quadrature points
-% Quadrature points stored as (zi_g, eta_g), 2D array of size (num_gauss_quad_points, ndim)
-% Shape functions in zi, eta system defined in compute_shape.m
-% Derivative of shape functions defined in compute_df
+%% 2D heat equation with forcing  
+% Solve for $u(x,y,t)$ such that
+%
+% $$u_{t}-\Delta u= (\pi\sin(2\pi t)-\pi^{2}\cos(2\pi t))\sin(\pi x)\sin(\pi y),\textnormal{on }\Omega,t>0,$$
+%
+% $$u=0,\textnormal{on }\partial\Omega,t>0,$$
+%
+% $$u(x,y,t)=-\frac{1}{2}\sin(\pi x)\sin(\pi y)$$
+%
+% where $\Omega={(x,y):0<x<2,0<y<1}$ and $\partial\Omega$ is boundary of $\Omega$
+% 
+% # Rectangular domain: [x_start, x_end] X [y_start, y_end]
+% # Rectangular mesh with spacing h in x and y directions (ndim = 2)
+% # Mesh connectivity stored in inode
+% # Tranformation from x,y directions to zi,eta directions
+% # nnodes = 4 nodes in rectangular element
+% # Dirichlet condition with 0 at boundary (id = 0 at boundary, 1 elsewhere)
+% # Gaussian quadrature integration with num_gauss_quad_points quadrature points
+% # Quadrature points stored as (zi_g, eta_g), 2D array of size (num_gauss_quad_points, ndim)
+% # Shape functions in zi, eta system defined in compute_shape.m
+% # Derivative of shape functions defined in compute_df
 
+%% Set true solution for comparison later
+% $$u(x,y,t)=-\frac{1}{2}\cos(2\pi t)\sin(\pi x)\sin(\pi y)$$
+set_true_sol = @(t,x,y) -0.5*(cos(2*pi*t)*sin(pi*x).*sin(pi*y));
+
+%% Set force
+% $$f(x,y,t)=(\pi\sin(2\pi t)-\pi^{2}\cos(2\pi t))\sin(\pi x)\sin(\pi y)$$
 set_force = @(t,x,y) (pi*sin(2*pi*t) - ...
     pi*pi*cos(2*pi*t))*(sin(pi*x)*sin(pi*y));
-set_true_sol = @(t, x,y) -0.5*(cos(2*pi*t)*sin(pi*x).*sin(pi*y));
 
-% Domain parameters
+%% Set initial condition
+% $$u(x,y,t)=-\frac{1}{2}\sin(\pi x)\sin(\pi y)$$           
+set_IC = @(x,y) -0.5*sin(pi*x).*sin(pi*y);
+
+%% Input parameters
 xstart = 0.0; % x0
 xend = 2.0; % x1
 ystart = 0.0; % y0
 yend = 1.0; % y1
-h = 0.25/8.0; % Spacing
+h = 0.25; % Spacing
 tend = 4.0; % Final time
 theta=0.5; % 0 <= theta <= 1 | 1: Explicit; 0: Implcit
-dt = 0.1/8.0; % Time step
+dt = 0.1; % Time step
 sol_method = 2; % 1 = FEM; 2 = FDM (5 point stencil)
 solver = 3; % 0: MATLAB default solver
             % 1: Conjugate gradient
@@ -34,19 +52,18 @@ solver = 3; % 0: MATLAB default solver
             % 3: Multigrid with Gauss seidel iteration upto ...
             % number of nodes in x direction become 5
 
-set_IC = @(x,y) -0.5*sin(pi*x).*sin(pi*y);
-
+%% Finite element parameters
 nnode = 4; % Number of nodes in element
 ndim = 2; % 2 directions x & y
 
-% Quadrature points
+%% Parameters for numerical integration - Setting quadrature points
 num_quad_quad_points = 4; % Number of gauss points
-if (sol_method == 1)
+if (sol_method == 1) % If method is FEM
     zi_1 = [-1.0/sqrt(3), 1.0/sqrt(3)]; % z direction gauss points
     eta_1 = [-1.0/sqrt(3), 1.0/sqrt(3)]; % eta direction gauss points
     w_1 = ones(num_quad_quad_points,1); % Weights for integration for zi direction
     w_2 = ones(num_quad_quad_points,1); % Weights for integration for eta direction
-elseif(sol_method == 2)
+elseif(sol_method == 2) % If method is 5 point FDM
     zi_1 = [-1.0, 1.0]; % z direction gauss points
     eta_1 = [-1.0, 1.0]; % eta direction gauss points
     w_1 = 0.25*ones(num_quad_quad_points,1); % Weights for integration for zi direction
@@ -56,12 +73,12 @@ end
 zi_g = zi_g(:);
 eta_g = eta_g(:);
 
+%% Set the mesh: These variables will be used later
 num_nodes_x = fix((xend-xstart)/h)+1; % Nodes in x direction
 num_nodes_y = fix((yend-ystart)/h)+1; % Nodes in y direction
 nj = num_nodes_x*num_nodes_y; % Total number of nodes
 nelem = (num_nodes_x-1)*(num_nodes_y-1); % Total number of nodes
 
-% Setting the mesh
 x_points = linspace(xstart,xend,num_nodes_x);
 y_points = linspace(ystart,yend,num_nodes_y);
 [y_mesh,x_mesh] = meshgrid(y_points,x_points);
@@ -70,7 +87,7 @@ y = y_mesh(:);
 
 y_old = set_IC(x,y); %IC
 
-%BC using array id
+%% Set boundary condition using array id
 id = zeros(num_nodes_x,num_nodes_y);
 id(1,:) = 1;
 id(end,:) = 1;
@@ -78,18 +95,7 @@ id(:,1) = 1;
 id(:,end) = 1;
 id = id(:);
 
-nx_coarse = (num_nodes_x+1)/2;
-ny_coarse = (num_nodes_y +1)/2;
-nj_coarse = nx_coarse*ny_coarse;
-id_coarse = zeros(nx_coarse, ny_coarse);
-id_coarse(1,:) = 1;
-id_coarse(end,:) = 1;
-id_coarse(:,1) = 1;
-id_coarse(:,end) = 1;
-id_coarse = id_coarse(:);
-
-
-% Connectivity stored in array inode
+%% Set mesh connectivity in array inode
 inode = zeros(nnode,nelem);
 iter1 = 1;
 iter2 = 0;
@@ -105,11 +111,11 @@ for element_num=1:nelem
     end
 end
 
+%% Time integration: Loop over every element
 t0 = 0.0;
 t1=0.0;
 iter_array = zeros(fix(tend/dt),1);
 iter_num = 1;
-% Loop over every element
 while(abs(t1 - tend) > dt/4.0)
     t1 = t0+dt;
     global_k = zeros(nj,nj);
@@ -201,7 +207,7 @@ while(abs(t1 - tend) > dt/4.0)
 end
 solut_mesh = reshape(y_old,[num_nodes_x, num_nodes_y]);
 
-% %Post-processing
+%% Post-processing
 subplot(2,2,1)
 surf(x_mesh,y_mesh,solut_mesh)
 xlabel('X');
